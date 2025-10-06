@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hamming Encoder / Decoder — ASCII → Binary → Hamming</title>
+  <style>
+    body{font-family:Inter,ui-sans-serif,system-ui,Arial;max-width:980px;margin:24px auto;padding:12px}
+    h1{font-size:20px;margin-bottom:6px}
+    label{display:block;margin-top:12px}
+    input,button,select,textarea{font-size:14px;padding:8px;margin-top:6px;width:100%;box-sizing:border-box}
+    .row{display:flex;gap:12px}
+    .col{flex:1}
+    pre{background:#f5f5f7;padding:12px;overflow:auto;max-height:240px}
+    small{color:#666}
+    .controls{display:flex;gap:8px;margin-top:8px}
+    .inline{display:inline-block;width:auto}
+    .info{background:#eef7ff;padding:8px;border-left:3px solid #66a}
+    .bad{color:#a00}
+  </style>
+</head>
+<body>
+  <h1>Hamming Encoder / Decoder</h1>
+  <p>Код: <em>ASCII → бінарний → код Хеммінга</em>. Можна задати довжину блоку даних (кількість біт даних у кожному Hamming-блоці). Підтримує виявлення і виправлення одиночної помилки.</p>
+
+  <label>Введіть або завантажте текстовий файл (.txt):
+    <textarea id="textInput" rows="5" placeholder="Тут ваш текст..."></textarea>
+    <input type="file" id="fileInput" accept=".txt" />
+  </label>
+
+  <div class="row">
+    <div class="col">
+      <label>Кількість біт даних у блоці (k). Будь-яке натуральне число; алгоритм підбере число парних бітів r так, щоб 2^r ≥ k + r + 1. (Наприклад, 4 → Hamming(7,4))</label>
+      <input id="kInput" type="number" min="1" value="4" />
+    </div>
+    <div class="col">
+      <label>Заповнення для останнього блоку (bit):</label>
+      <input id="padBit" type="text" maxlength="1" value="0" />
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="encodeBtn">Кодувати</button>
+    <button id="downloadEncoded">Завантажити закодований (.bin.txt)</button>
+    <button id="decodeBtn">Декодувати (виправити)</button>
+  </div>
+
+  <label>Закодовані біти (послідовність Hamming-блоків):
+    <pre id="encodedView"></pre>
+  </label>
+
+  <label>Маніпуляції з бітом (для демонстрації спотворення):</label>
+  <div class="row">
+    <div class="col">
+      <label>Індекс блоку (0-based):</label>
+      <input id="blockIndex" type="number" min="0" value="0" />
+    </div>
+    <div class="col">
+      <label>Індекс біту в блоці (0-based, лівий=0):</label>
+      <input id="bitIndex" type="number" min="0" value="0" />
+    </div>
+    <div class="col inline" style="flex:0 0 160px;align-self:flex-end">
+      <button id="flipBit">Перекрутити біт</button>
+    </div>
+  </div>
+
+  <label>Результат декодування (виправлений ASCII текст):
+    <pre id="decodedView"></pre>
+  </label>
+
+  <div class="info" id="logBox"></div>
+
+<script>
+// Utility functions
+function asciiToBinary(str){
+  return str.split('').map(ch => {
+    const bin = ch.charCodeAt(0).toString(2);
+    return bin.padStart(8,'0');
+  }).join('');
+}
+function binaryToAscii(bin){
+  // expect multiples of 8
+  let out='';
+  for(let i=0;i+8<=bin.length;i+=8){
+    const byte = bin.slice(i,i+8);
+    out += String.fromCharCode(parseInt(byte,2));
+  }
+  return out;
+}
+
+function calcParityBits(k){
+  let r=1;
+  while(Math.pow(2,r) < k + r + 1) r++;
+  return r;
+}
+
+function insertParityPlaces(dataBitsArr, r){
+  // dataBitsArr — array of '0'/'1' length k; we will return array length k+r with parity positions (indices 0-based for positions 1,2,4,...)
+  const total = dataBitsArr.length + r;
+  const result = new Array(total).fill(null);
+  // positions that are powers of two are parity (1-based positions 1,2,4... -> 0,1,3 indices)
+  let dataIdx=0;
+  for(let i=0;i<total;i++){
+    const pos = i+1;
+    if((pos & (pos-1))===0){
+      // parity
+      result[i] = '0';
+    } else {
+      result[i] = dataBitsArr[dataIdx++];
+    }
+  }
+  return result;
+}
+
+function computeParityBits(arr){
+  const total = arr.length;
+  const r = Math.ceil(Math.log2(total+1));
+  for(let i=0;i<total;i++){
+    const pos = i+1;
+    if((pos & (pos-1))===0){
+      // compute parity for this parity position
+      let parity=0;
+      for(let j=pos;j<=total;j+=pos*2){
+        for(let t=j-1;t<Math.min(j-1+pos,total);t++){
+          if(t===i) continue; // parity bit itself
+          if(arr[t]==='1') parity ^=1;
+        }
+      }
+      arr[i]=parity.toString();
+    }
+  }
+}
+
+function hammingEncodeBlock(dataBits, k){
+  // dataBits: string of length k
+  const r = calcParityBits(k);
+  const arr = insertParityPlaces(dataBits.split(''), r);
+  computeParityBits(arr);
+  return arr.join('');
+}
+
+function hammingDecodeBlock(hBits){
+  // returns {corrected:string, data:string, errorPosition: number (1-based) or 0 if none, correctedIndex (0-based) if flipped}
+  const total = hBits.length;
+  const arr = hBits.split('');
+  let syndrome = 0;
+  // compute syndrome by checking parity bits
+  for(let i=0;i<total;i++){
+    const pos = i+1;
+    if((pos & (pos-1))===0){
+      let parity=0;
+      for(let j=pos;j<=total;j+=pos*2){
+        for(let t=j-1;t<Math.min(j-1+pos,total);t++){
+          if(arr[t]==='1') parity ^=1;
+        }
+      }
+      if(parity!==0) syndrome += pos;
+    }
+  }
+  let corrected = arr.slice();
+  let errorPosition = syndrome; // 1-based position where error occurred, 0 means no error
+  if(errorPosition!==0 && errorPosition<=total){
+    // flip that bit
+    const idx = errorPosition-1;
+    corrected[idx] = corrected[idx] === '1' ? '0' : '1';
+  }
+  // extract data bits (non-parity positions)
+  const dataBits = [];
+  for(let i=0;i<total;i++){
+    const pos=i+1;
+    if((pos & (pos-1))!==0){
+      dataBits.push(corrected[i]);
+    }
+  }
+  return {corrected: corrected.join(''), data: dataBits.join(''), errorPosition};
+}
+
+// higher-level encode/decode for full stream
+function encodeTextToHamming(text, k, padBit){
+  const bin = asciiToBinary(text);
+  // split into k-bit data blocks
+  const blocks = [];
+  for(let i=0;i<bin.length;i+=k){
+    let block = bin.slice(i,i+k);
+    if(block.length<k) block = block.padEnd(k,padBit);
+    blocks.push(block);
+  }
+  const encodedBlocks = blocks.map(b=>hammingEncodeBlock(b,k));
+  return {encodedBlocks, blocks, bin};
+}
+
+function decodeHammingStream(encodedBlocks){
+  const decodedDataBits = [];
+  const errors = [];
+  encodedBlocks.forEach((blk, idx)=>{
+    const res = hammingDecodeBlock(blk);
+    decodedDataBits.push(res.data);
+    if(res.errorPosition && res.errorPosition>0) errors.push({block:idx, position:res.errorPosition});
+  });
+  const dataStream = decodedDataBits.join('');
+  return {dataStream, errors};
+}
+
+// UI wiring
+const textInput = document.getElementById('textInput');
+const fileInput = document.getElementById('fileInput');
+const kInput = document.getElementById('kInput');
+const padBitInput = document.getElementById('padBit');
+const encodeBtn = document.getElementById('encodeBtn');
+const encodedView = document.getElementById('encodedView');
+const downloadEncoded = document.getElementById('downloadEncoded');
+const blockIndex = document.getElementById('blockIndex');
+const bitIndex = document.getElementById('bitIndex');
+const flipBitBtn = document.getElementById('flipBit');
+const decodeBtn = document.getElementById('decodeBtn');
+const decodedView = document.getElementById('decodedView');
+const logBox = document.getElementById('logBox');
+
+let appState = {encodedBlocks:[], k:4, padBit:'0', originalText:''};
+
+fileInput.addEventListener('change', e=>{
+  const f = e.target.files[0];
+  if(!f) return;
+  const reader = new FileReader();
+  reader.onload = ev=>{
+    textInput.value = ev.target.result;
+  };
+  reader.readAsText(f,'utf-8');
+});
+
+encodeBtn.addEventListener('click', ()=>{
+  const text = textInput.value || '';
+  const k = parseInt(kInput.value,10) || 4;
+  const padBit = (padBitInput.value === '1') ? '1' : '0';
+  appState.k = k; appState.padBit=padBit; appState.originalText = text;
+  const res = encodeTextToHamming(text,k,padBit);
+  appState.encodedBlocks = res.encodedBlocks.slice();
+  encodedView.textContent = res.encodedBlocks.join(' ');
+  logBox.innerHTML = `Закодовано ${res.blocks.length} блок(ів). Загальна довжина бітів: ${res.encodedBlocks.join('').length}.`;
+  // set default flip indexes
+  blockIndex.max = Math.max(0,res.encodedBlocks.length-1);
+  bitIndex.max = (res.encodedBlocks[0]||'').length-1;
+});
+
+downloadEncoded.addEventListener('click', ()=>{
+  if(!appState.encodedBlocks.length){ alert('Спочатку натисніть "Кодувати"'); return; }
+  const blob = new Blob([appState.encodedBlocks.join('')],{type:'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'hamming_encoded.bin.txt';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+flipBitBtn.addEventListener('click', ()=>{
+  const bi = parseInt(blockIndex.value,10)||0;
+  const biti = parseInt(bitIndex.value,10)||0;
+  if(!appState.encodedBlocks.length){ alert('Спочатку натисніть "Кодувати"'); return; }
+  if(bi<0 || bi>=appState.encodedBlocks.length){ alert('Невірний індекс блоку'); return; }
+  const blk = appState.encodedBlocks[bi].split('');
+  if(biti<0 || biti>=blk.length){ alert('Невірний індекс біту'); return; }
+  blk[biti] = blk[biti] === '1' ? '0' : '1';
+  appState.encodedBlocks[bi] = blk.join('');
+  encodedView.textContent = appState.encodedBlocks.join(' ');
+  logBox.innerHTML = `Біт ${biti} у блоці ${bi} інвертовано.`;
+});
+
+decodeBtn.addEventListener('click', ()=>{
+  if(!appState.encodedBlocks.length){ alert('Спочатку натисніть "Кодувати"'); return; }
+  const res = decodeHammingStream(appState.encodedBlocks);
+  // rebuild bitstream of data bits
+  // note: decoded data bits length may not be multiple of 8 — we truncate to full bytes
+  const dataBits = res.dataStream;
+  const bytesLen = Math.floor(dataBits.length/8)*8;
+  const ascii = binaryToAscii(dataBits.slice(0,bytesLen));
+  decodedView.textContent = ascii;
+  if(res.errors.length===0){
+    logBox.innerHTML = `Декодування пройшло. Помилок не виявлено.`;
+  } else {
+    logBox.innerHTML = `Виявлено та виправлено одиночні помилки у блок(ах): ` + res.errors.map(e=>`[блок ${e.block}, позиція ${e.position}]`).join(', ');
+  }
+});
+
+</script>
+</body>
+</html>
