@@ -21,7 +21,7 @@
 </head>
 <body>
   <h1>Hamming Encoder / Decoder</h1>
-  <p>Код: <em>ASCII → бінарний → код Хеммінга</em>. Можна задати довжину блоку даних (кількість біт даних у кожному Hamming-блоці). Підтримує виявлення і виправлення одиночної помилки.</p>
+  <p>Код: <em>ASCII → бінарний → код Хеммінга</em></p>
 
   <label>Введіть або завантажте текстовий файл (.txt):
     <textarea id="textInput" rows="5" placeholder="Тут ваш текст..."></textarea>
@@ -29,14 +29,8 @@
   </label>
 
   <div class="row">
-    <div class="col">
-      <label>Кількість біт даних у блоці (k). Будь-яке натуральне число; алгоритм підбере число парних бітів r так, щоб 2^r ≥ k + r + 1. (Наприклад, 4 → Hamming(7,4))</label>
-      <input id="kInput" type="number" min="1" value="4" />
-    </div>
-    <div class="col">
-      <label>Заповнення для останнього блоку (bit):</label>
-      <input id="padBit" type="text" maxlength="1" value="0" />
-    </div>
+    <label>Кількість біт даних у блоці (k)</label>
+    <input id="kInput" type="number" min="1" value="4" />   
   </div>
 
   <div class="controls">
