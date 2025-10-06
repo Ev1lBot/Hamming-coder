@@ -21,7 +21,7 @@
 </head>
 <body>
   <h1>Hamming Encoder / Decoder</h1>
-  <p>Код: <em>ASCII → бінарний → код Хеммінга</em></p>
+  <p>Код: <em>ASCII → бінарний → код Хеммінга</em>. Можна задати довжину блоку даних (кількість біт даних у кожному Hamming-блоці). Підтримує виявлення і виправлення одиночної помилки.</p>
 
   <label>Введіть або завантажте текстовий файл (.txt):
     <textarea id="textInput" rows="5" placeholder="Тут ваш текст..."></textarea>
@@ -29,8 +29,10 @@
   </label>
 
   <div class="row">
-    <label>Кількість біт даних у блоці (k)</label>
-    <input id="kInput" type="number" min="1" value="4" />   
+    <div class="col">
+      <label>Кількість біт даних у блоці (k). Будь-яке натуральне число; алгоритм підбере число парних бітів r так, щоб 2^r ≥ k + r + 1. (Наприклад, 4 → Hamming(7,4))</label>
+      <input id="kInput" type="number" min="1" value="4" />
+    </div>
   </div>
 
   <div class="controls">
@@ -73,7 +75,6 @@ function asciiToBinary(str){
   }).join('');
 }
 function binaryToAscii(bin){
-  // expect multiples of 8
   let out='';
   for(let i=0;i+8<=bin.length;i+=8){
     const byte = bin.slice(i,i+8);
@@ -89,15 +90,12 @@ function calcParityBits(k){
 }
 
 function insertParityPlaces(dataBitsArr, r){
-  // dataBitsArr — array of '0'/'1' length k; we will return array length k+r with parity positions (indices 0-based for positions 1,2,4,...)
   const total = dataBitsArr.length + r;
   const result = new Array(total).fill(null);
-  // positions that are powers of two are parity (1-based positions 1,2,4... -> 0,1,3 indices)
   let dataIdx=0;
   for(let i=0;i<total;i++){
     const pos = i+1;
     if((pos & (pos-1))===0){
-      // parity
       result[i] = '0';
     } else {
       result[i] = dataBitsArr[dataIdx++];
@@ -112,11 +110,10 @@ function computeParityBits(arr){
   for(let i=0;i<total;i++){
     const pos = i+1;
     if((pos & (pos-1))===0){
-      // compute parity for this parity position
       let parity=0;
       for(let j=pos;j<=total;j+=pos*2){
         for(let t=j-1;t<Math.min(j-1+pos,total);t++){
-          if(t===i) continue; // parity bit itself
+          if(t===i) continue;
           if(arr[t]==='1') parity ^=1;
         }
       }
@@ -126,7 +123,6 @@ function computeParityBits(arr){
 }
 
 function hammingEncodeBlock(dataBits, k){
-  // dataBits: string of length k
   const r = calcParityBits(k);
   const arr = insertParityPlaces(dataBits.split(''), r);
   computeParityBits(arr);
@@ -134,11 +130,9 @@ function hammingEncodeBlock(dataBits, k){
 }
 
 function hammingDecodeBlock(hBits){
-  // returns {corrected:string, data:string, errorPosition: number (1-based) or 0 if none, correctedIndex (0-based) if flipped}
   const total = hBits.length;
   const arr = hBits.split('');
   let syndrome = 0;
-  // compute syndrome by checking parity bits
   for(let i=0;i<total;i++){
     const pos = i+1;
     if((pos & (pos-1))===0){
@@ -152,13 +146,11 @@ function hammingDecodeBlock(hBits){
     }
   }
   let corrected = arr.slice();
-  let errorPosition = syndrome; // 1-based position where error occurred, 0 means no error
+  let errorPosition = syndrome;
   if(errorPosition!==0 && errorPosition<=total){
-    // flip that bit
     const idx = errorPosition-1;
     corrected[idx] = corrected[idx] === '1' ? '0' : '1';
   }
-  // extract data bits (non-parity positions)
   const dataBits = [];
   for(let i=0;i<total;i++){
     const pos=i+1;
@@ -169,10 +161,9 @@ function hammingDecodeBlock(hBits){
   return {corrected: corrected.join(''), data: dataBits.join(''), errorPosition};
 }
 
-// higher-level encode/decode for full stream
-function encodeTextToHamming(text, k, padBit){
+function encodeTextToHamming(text, k){
   const bin = asciiToBinary(text);
-  // split into k-bit data blocks
+  const padBit='0';
   const blocks = [];
   for(let i=0;i<bin.length;i+=k){
     let block = bin.slice(i,i+k);
@@ -195,11 +186,9 @@ function decodeHammingStream(encodedBlocks){
   return {dataStream, errors};
 }
 
-// UI wiring
 const textInput = document.getElementById('textInput');
 const fileInput = document.getElementById('fileInput');
 const kInput = document.getElementById('kInput');
-const padBitInput = document.getElementById('padBit');
 const encodeBtn = document.getElementById('encodeBtn');
 const encodedView = document.getElementById('encodedView');
 const downloadEncoded = document.getElementById('downloadEncoded');
@@ -210,7 +199,7 @@ const decodeBtn = document.getElementById('decodeBtn');
 const decodedView = document.getElementById('decodedView');
 const logBox = document.getElementById('logBox');
 
-let appState = {encodedBlocks:[], k:4, padBit:'0', originalText:''};
+let appState = {encodedBlocks:[], k:4, originalText:''};
 
 fileInput.addEventListener('change', e=>{
   const f = e.target.files[0];
@@ -225,13 +214,11 @@ fileInput.addEventListener('change', e=>{
 encodeBtn.addEventListener('click', ()=>{
   const text = textInput.value || '';
   const k = parseInt(kInput.value,10) || 4;
-  const padBit = (padBitInput.value === '1') ? '1' : '0';
-  appState.k = k; appState.padBit=padBit; appState.originalText = text;
-  const res = encodeTextToHamming(text,k,padBit);
+  appState.k = k; appState.originalText = text;
+  const res = encodeTextToHamming(text,k);
   appState.encodedBlocks = res.encodedBlocks.slice();
   encodedView.textContent = res.encodedBlocks.join(' ');
   logBox.innerHTML = `Закодовано ${res.blocks.length} блок(ів). Загальна довжина бітів: ${res.encodedBlocks.join('').length}.`;
-  // set default flip indexes
   blockIndex.max = Math.max(0,res.encodedBlocks.length-1);
   bitIndex.max = (res.encodedBlocks[0]||'').length-1;
 });
@@ -262,8 +249,6 @@ flipBitBtn.addEventListener('click', ()=>{
 decodeBtn.addEventListener('click', ()=>{
   if(!appState.encodedBlocks.length){ alert('Спочатку натисніть "Кодувати"'); return; }
   const res = decodeHammingStream(appState.encodedBlocks);
-  // rebuild bitstream of data bits
-  // note: decoded data bits length may not be multiple of 8 — we truncate to full bytes
   const dataBits = res.dataStream;
   const bytesLen = Math.floor(dataBits.length/8)*8;
   const ascii = binaryToAscii(dataBits.slice(0,bytesLen));
